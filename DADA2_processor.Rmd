@@ -1,0 +1,393 @@
+---
+title: "DADA2 pipeline"
+author: "by CMET - Ghent University"
+date: "Generated on `r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:
+    code_folding: none
+    css: dependencies/report_data.css
+    fig_caption: yes
+    highlight: espresso
+    keep_md: yes
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+      toc_depth: 2
+editor_options: 
+  chunk_output_type: console
+params:
+  run_type:
+    label: "Select the run type & knit"
+    value: inital render
+    input: select
+    choices: [inital render, report]
+---
+
+Following the DADA2 workflow as outlined by https://benjjneb.github.io/dada2/tutorial_1_2.html
+
+The DADA2 R package was used to process the amplicon sequence data according to the pipeline tutorial (Callahan et al 2016). In a first quality control step, the primer sequences were removed and reads were truncated at a quality score cut-off (truncQ=2). Besides trimming, additional filtering was performed to eliminate reads containing any ambiguous base calls or reads with high expected errors (maxEE=2,2). After dereplication, unique reads were further denoised using the Divisive Amplicon Denoising Algorithm (DADA) error estimation algorithm and the selfConsist sample inference algorithm (with the option pooling =TRUE). The obtained error rates were inspected and after approval, the denoised reads were merged. Finally, the ASV table obtained after chimera removal was used for taxonomy assignment using the Naive Bayesian Classifier and the DADA2 formatted Silva v138.1 (Quast et al 2013).
+
+This analysis was run using `r sessionInfo()$R.version$version.string` on a `r sessionInfo()$platform` machine.
+
+```{r Loading DADA2 library,cache=TRUE,warning=FALSE,message=FALSE,dpi=600,out.width="100%"}
+
+##########################################################################################
+############################## Missing functionality #####################################
+##########################################################################################
+
+# Doesn't work for non-primerclipped data yet. Will be added soon*
+
+##########################################################################################
+######################## Instructions for use, read first!!!!! ###########################
+##########################################################################################
+
+# Create new folder on server (in "media/projects1/yourname/projectname") and create subfolder "PrimerClipped" and "fastq"
+# Copy PrimerClipped files from Illumina data drive to PrimerClipped folder in FileZilla
+# Copy the fastq tarballs to the fastq folder by running the following command:
+# find ./ -iname *fastq.bz2 | xargs -I{} cp {} ./fastq
+# navigate to the fastq folders on the server and unzip the tarballs by running one of the following commands:
+# bunzip2 *
+# gunzip *
+
+species <- "yes" # need species assignment?
+
+##########################################################################################
+########## Enter the file location of your fastq files below (no trailing slash) #########
+##########################################################################################
+
+# fldr <- "/Projects1/timNGSjobs/amplidev" # manual directory override
+# before: set your folder with fasq as working directory 
+fldr <- getwd() # assumes your project is in the folder where fastq files live
+fldr <- gsub("/AmpliMET","",fldr)
+
+##########################################################################################
+### Run the script manually (chunk by chunk), then knit a HTML report if you want one ####
+##########################################################################################
+
+library("dada2")
+library("ggplot2")
+library("lattice")
+library("stringr")
+library("knitr")
+library("dplyr")
+dpi <- 600
+
+if(!dir.exists(file.path("DADA2"))){
+  dir.create(file.path("DADA2"),recursive=TRUE)}
+outputloc <- file.path("DADA2")
+```
+
+
+```{r Step1: Loading data,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%"}
+# Input data: paired-end fastq files that have been split (or “demultiplexed”) by sample and from which the primers, barcodes/adapters have already been removed. 
+
+# Set the path to the data folder. 10 files are present corresponding to 5 samples. 
+     path <- fldr
+     list.files(path)   
+# Unzip
+     #system(paste("cd ",fldr,"&& bunzip2 *",sep=""))
+# Remove dashes and replace to underscores
+     system(paste("cd ",fldr,"&& ls *.fastq | xargs -I {} rename 's/-/_/g' {}",sep=""))
+
+# Read in files: Forward and reverse fastq filenames have format: SAMPLENAME_R1.fastq and SAMPLENAME_R2.fastq
+     fnFs <- sort(list.files(path, pattern="_R1.fastq", full.names = TRUE))
+     fnFs
+     fnRs <- sort(list.files(path, pattern="_R2.fastq", full.names = TRUE))
+     fnRs
+
+##########################################################################################
+######### Sample names require some messing around with. Examples are provided. ##########
+##########################################################################################
+     
+# Extract sample names, assuming filenames have format: SAMPLENAME_R1/2.fastq
+# basic implementation
+     sample.names <- basename(fnFs) # load forward sequence names
+#    sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 3) # only retains the 3th value seperated by underscores
+     sample.names <- gsub("341F_785R_P.._..._CMET._","",sample.names)  # Used to remove artifacts from more complicated strings
+     sample.names <- gsub("_R..fastq","",sample.names) # Used to remove artifacts from more complicated strings
+     
+     sample.names
+     
+dacontigs.df <- do.call(rbind, Map(data.frame, fnFs=basename(fnFs), fnRs=basename(fnRs)))
+rownames (dacontigs.df) <- sample.names
+save(dacontigs.df,file="DADA2/dacontigs.Rda")
+     
+```
+
+# Create contigs
+
+```{r Step7: Report0,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%"}
+load(file="DADA2/dacontigs.Rda")
+kable(dacontigs.df)
+```
+
+## Read quality
+
+```{r Step2: Inspecting read quality,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%"}
+# Plot the quality profile of the reads. 
+     dada2::plotQualityProfile(fnFs[1:8]) + geom_vline(aes(xintercept=200),linetype="dotted")+ 
+  geom_hline(aes(yintercept=30),linetype="dotted")
+                                                                                                    
+    dada2::plotQualityProfile(fnRs[1:8]) + geom_vline(aes(xintercept=220),linetype="dotted")+ 
+  geom_hline(aes(yintercept=30),linetype="dotted")
+                                                                                        
+```
+
+## Read cleanup
+
+Reads were trimmed based on quality plots and trunQ quality score cut-off. In addition reads with ambiguous bases (maxN=0) and reads with more than 2 maxEE (expected errors) were filtered out. The result of this filter is plotted below:
+
+```{r Step3: Remove primers, filter and trim reads,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Filtering 
+ 
+  ## Place filtered files in filtered/ subdirectory and because the compress option will be used in the filtering step below, file names will have the fastq.gz extension
+     filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+     filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+     names(filtFs) <- sample.names
+     names(filtRs) <- sample.names
+    
+  ## Locate the primers in the files in notepad ++. Primers are not retrieved => they have been trimmed already 
+     
+     #341F: CCTACGGGNGGCWGCAG =>  CCTACGGG[ACGT]GGC[AT]GCAG
+     #785R: GACTACHVGGGTATCTAAKCC =>  GACTAC[ACT][ACG]GGGTATCTAA[GT]CC => 785R rev comp: GG[CA]TTAGATACCC[TGC][TGA]GTAGTC
+     #FWD_PRIMER_LEN <- 19 
+     #REV_PRIMER_LEN <- 20
+    
+  ## Remove primers, trim read lenght based on quality plots and trunQ quality score cut-off and filter out reads with ambiguous bases (maxN=0), reads with higher than maxEE "expected errors" and reads that match against the phiX genome. The trunQ value comes from The Illumina manual (page 30): If a read ends with a segment of mostly low quality (Q15 or below), then all of the quality values in the segment are replaced with a value of 2 (encoded as the letter B in Illumina's text-based encoding of quality scores)... This Q2 indicator does not predict a specific error rate, but rather indicates that a specific final portion of the read should not be used in further analyses.
+     out <- filterAndTrim(fnFs,filtFs,fnRs,filtRs,trimLeft=c(0,0),truncLen=c(200,220),maxN=0,maxEE=c(2,2),truncQ=2,rm.phix=TRUE,compress=TRUE,multithread=TRUE) 
+     head(out)
+     
+exists <- file.exists(filtFs) & file.exists(filtRs)
+filtFs <- filtFs[exists]
+filtRs <- filtRs[exists]
+     
+save(filtFs,file="DADA2/filtFs.Rda")
+save(filtRs,file="DADA2/filtRs.Rda")
+```
+
+```{r Step3b,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%"}
+load(file="DADA2/filtFs.Rda")
+load(file="DADA2/filtRs.Rda")
+  ## Plot the quality profile of the reads. 
+    dada2::plotQualityProfile(filtFs[1:8])
+    dada2::plotQualityProfile(filtRs[1:8])
+```
+
+
+```{r Step4: Dereplicate,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Dereplicate
+## Here we take the unique reads and generate a count file (sort of)    
+    derepFs <- derepFastq(filtFs, verbose=TRUE)
+    derepRs <- derepFastq(filtRs, verbose=TRUE)
+    
+# Name the derep-class objects by the sample names
+    names(derepFs) <- sample.names[exists]
+    names(derepRs) <- sample.names[exists]
+
+# Verify dereplication results   
+   derepFs  
+   derepRs
+```
+
+# Error estimation
+
+The error rates for each possible transition (eg. A->C, A->G, …) are shown.
+
+```{r Step5: Estimate errors with DADA algorithm,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Learn the error rates. This takes a while. 
+    dadaFs.lrn <- dada(derepFs, err=NULL, selfConsist = TRUE, multithread=TRUE)
+    dadaRs.lrn <- dada(derepRs, err=NULL, selfConsist = TRUE, multithread=TRUE)
+
+# Look at the error rates used as input in every step of the selfconsist algorithm
+   dadaFs.lrn[[1]]$err_in
+   dadaRs.lrn[[1]]$err_in     
+
+# Obtain error tables     
+    errF <- dadaFs.lrn[[1]]$err_out 
+    head(errF)
+    errR <- dadaRs.lrn[[1]]$err_out 
+    head(errR) 
+    
+save(dadaFs.lrn,file="DADA2/dadaFs.lrn.Rda")
+save(dadaRs.lrn,file="DADA2/dadaRs.lrn.Rda")
+```
+
+```{r Step5b,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%"}
+load(file="DADA2/dadaFs.lrn.Rda")
+load(file="DADA2/dadaRs.lrn.Rda")
+# Plot the error rates  
+    plotErrors(dadaFs.lrn, nominalQ=TRUE,err_in=TRUE)
+    plotErrors(dadaRs.lrn, nominalQ=TRUE,err_in=TRUE)
+    
+# Check DADA options
+    getDadaOpt()
+```
+
+
+```{r Step6: Building an error model,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Sample inference
+    dadaFs <- dada(derepFs, err=errF, multithread=TRUE)
+    dadaFs
+    dadaFs[[1]]$err_out
+    dadaFs[[1]]$err_in
+    dadaRs <- dada(derepRs, err=errR, multithread=TRUE)
+    dadaRs
+    dadaRs[[1]]$err_out
+    dadaRs[[1]]$err_in
+```
+
+
+```{r Step7: Merging paired end reads,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Merge paired ends. Merge forward and reverse complement of the reverse read (denoised sequences). Merged sequences are only output if the forward and reverse reads overlap by at least 12 bases, and are identical to each other in the overlap region   
+    mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs, verbose=TRUE)
+    #head(mergers[[1]])  
+```
+
+
+```{r Step8: Creating ASV table,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Construct sequence table with columns = ASVs and rows = samples. The lenght of the sequences varies between 401-428, which is as expected given the used 341F/785R primer pair 
+    seqtab <- makeSequenceTable(mergers)
+    dim(seqtab)
+    table(nchar(getSequences(seqtab)))
+    head(seqtab)
+```
+
+
+```{r Step9: Removing chimeras,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Chimera removal
+    seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+    dim(seqtab.nochim)
+    
+# Calculate percentage of chimeric ASVs and reads
+    (dim(seqtab)[2]-dim(seqtab.nochim)[2])/dim(seqtab)[2] 
+    1-sum(seqtab.nochim)/sum(seqtab) #only 3 % of the reads were chimeric 
+```
+
+
+```{r Step10: Check reads through pipeline,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Track reads through the pipeline
+    getN <- function(x) sum(getUniques(x))
+    out.df <- as.data.frame(out)
+    rownames(out.df) <- sample.names
+    processed <- as.data.frame(cbind(sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim)))
+    track <- merge(out.df,processed, by=0, all=TRUE)
+    rownames(track) <- track$Row.names
+    track <-  subset(track, select = -c(Row.names) )
+    # If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+    
+    colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+    track[is.na(track)] <- 0
+    track
+    colSums(track)
+    
+    
+xlsxloc <- "DADA2/DADA2_processor.xlsx"
+wb <- openxlsx::write.xlsx(x = track, file = "DADA2/DADA2_processor.xlsx", sheetName = "track", rowNames = TRUE)
+```
+
+
+```{r Step11: Format ASV table,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Format Output: amplicon sequence variant (ASV) table, a higher-resolution analogue of the traditional OTU table, which records the number of times each exact amplicon sequence variant was observed in each sample. 
+    ASVtable <- seqtab.nochim
+    ASVfasta <- colnames(ASVtable)
+    ASV <- paste("ASV",seq(1,length(ASVfasta),1),sep="")
+    ASVfasta <- cbind(ASV, ASVfasta)
+openxlsx::addWorksheet(wb,sheetName = "ASVfasta")
+openxlsx::writeData(wb,sheet="ASVfasta",x=ASVfasta)
+openxlsx::saveWorkbook(wb,file="DADA2/DADA2_processor.xlsx",overwrite=TRUE)
+    colnames(ASVtable) <- ASV
+```
+
+
+```{r Step12: Assign taxonomy,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Assign taxonomy: More info: https://benjjneb.github.io/dada2/training.html. Available DADA2 formatted reference taxonomies: Silva, RDP and greengenes are available. The Naive Bayesian Classifier is used for taxonomy assignments. The reference taxonomy files are copied to the DADA2 folder. A 50% cut-off is used as the bootstrap confidence for displaying taxonomy. Additionally, species level assignments can be done based on exact matching between ASVs and sequenced reference strains. Recent analysis suggests that exact matching (or 100% identity) is the only appropriate way to assign species to 16S gene fragments. Currently, species-assignment training fastas are available for the Silva and RDP 16S databases. 
+
+    taxa_silvav138 <- assignTaxonomy(seqtab.nochim,"/Taxonomies/DADA2tax/silva_nr99_v138.1_train_set.fa.gz", multithread=TRUE, minBoot = 50,tryRC=TRUE,outputBootstraps=TRUE)
+    taxa_silvav138.df <- as.data.frame(taxa_silvav138)
+    taxa_silvav138.df$seq <- rownames(taxa_silvav138.df)
+    rownames(taxa_silvav138.df) <- ASV
+    names(taxa_silvav138.df) = gsub(pattern = "tax.", replacement = "", x = names(taxa_silvav138.df))
+    taxa_silvav138.genus <- select(taxa_silvav138.df, -contains("boot"))
+    taxa_silvav138.genus <- select(taxa_silvav138.genus, -contains("seq"))
+    
+if(species=="yes") {
+taxa_silvav138.species <- data.frame(addSpecies(taxa_silvav138[[1]], "/Taxonomies/DADA2tax/silva_species_assignment_v138.1.fa.gz",tryRC=TRUE,allowMultiple=3))
+rownames(taxa_silvav138.species) <- ASV
+}
+
+
+```
+
+
+```{r Step13: Combine taxonomy and ASV table,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Combine taxonomy with abundance ASV table
+if(species=="yes") {
+    ASVtax138 <- dplyr::select(taxa_silvav138.species,-Species)
+    ASVtax138.species <- cbind(taxa_silvav138.species[colnames(ASVtable),],t(ASVtable))
+} else {
+    ASVtax138 <- taxa_silvav138.genus
+}
+    ASVtax138 <- cbind(ASVtax138[colnames(ASVtable),],t(ASVtable))
+openxlsx::addWorksheet(wb,sheetName = "ASVsilva138")
+openxlsx::writeData(wb,sheet="ASVsilva138",x=ASVtax138, rowNames = TRUE)
+openxlsx::saveWorkbook(wb,file="DADA2/DADA2_processor.xlsx",overwrite=TRUE)
+
+if(species=="yes") {
+openxlsx::addWorksheet(wb,sheetName = "ASVsilva138.species")
+openxlsx::writeData(wb,sheet="ASVsilva138.species",x=ASVtax138.species, rowNames = TRUE)
+openxlsx::saveWorkbook(wb,file="DADA2/DADA2_processor.xlsx",overwrite=TRUE)
+}
+
+openxlsx::addWorksheet(wb,sheetName = "Bootstrap_values")
+openxlsx::writeData(wb,sheet="Bootstrap_values",x=taxa_silvav138.df, rowNames = TRUE)
+openxlsx::saveWorkbook(wb,file="DADA2/DADA2_processor.xlsx",overwrite=TRUE)
+
+```
+
+
+```{r Step14: Combine taxonomy and proportional ASV table,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Combine taxonomy with abundance ASV table
+if(species=="yes") {
+    ASVtax <- dplyr::select(taxa_silvav138.species,-Species)
+} else {
+    ASVtax <- taxa_silvav138.genus
+}
+    
+    ASVtax_prop <- sweep(ASVtable,1,rowSums(ASVtable),'/')*100
+    
+    ASVtax_prop_138 <- cbind(ASVtax[colnames(ASVtax_prop),],t(ASVtax_prop))
+openxlsx::addWorksheet(wb,sheetName = "ASVsilva138_prop")
+openxlsx::writeData(wb,sheet="ASVsilva138_prop",x=ASVtax_prop_138, rowNames = TRUE)
+openxlsx::saveWorkbook(wb,file="DADA2/DADA2_processor.xlsx",overwrite=TRUE)
+
+```
+
+# Overview
+
+```{r Step15: Handoff to Phyloseq,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%",eval = FALSE, echo = FALSE}
+# Combine taxonomy with abundance ASV table
+if(species=="yes") {
+    taxexport <- dplyr::select(taxa_silvav138.species,-Species)
+    write.csv(taxa_silvav138.species,"DADA2/ASVtax138.species.csv")
+} else {
+    taxexport <- taxa_silvav138.genus
+}
+write.csv(taxexport,"DADA2/ASVtax138.csv")
+ASVtable.t <- t(ASVtable)
+write.csv(ASVtable.t,"DADA2/ASVtable.csv")
+write.csv(ASVfasta,"DADA2/ASVfasta.csv", row.names=FALSE)
+write.csv(track,"DADA2/track.csv", row.names=TRUE)
+save(track,file="DADA2/track.Rda")
+kable(track)
+
+```
+
+```{r Step16,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%"}
+# Combine taxonomy with abundance ASV table
+load(file="DADA2/track.Rda")
+kable(track)
+```
+

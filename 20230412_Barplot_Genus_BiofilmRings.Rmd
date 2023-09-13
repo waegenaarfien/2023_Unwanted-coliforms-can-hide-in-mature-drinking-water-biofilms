@@ -1,0 +1,788 @@
+---
+title: "Untitled"
+author: "Kim De Pape, adapted by FW"
+date: "2023-04-12"
+output: html_document
+runtime: shiny
+---
+
+```{r User options,cache=TRUE,warning=FALSE,message=FALSE,echo=FALSE}
+##########################################################################################
+##########################################################################################
+##########################################################################################
+##########################################################################################
+##########################################################################################
+########## Enter the file location of your fastq files below (no trailing slash) #########
+
+# fldr <- "/Projects1/timNGSjobs/amplidev" # manual directory override
+fldr <- "/Projects1/Fien/BiofilmRings/ngs/Input" # assumes your project is in the folder where fastq files live
+
+##########################################################################################
+# Enter the name of your metadata file (or just leave at default if you don't have one) ##
+################ Example can be found in the "examples" folder. ########################## 
+############# Upload it back to the repository folder (yourpath/AmpliMET) ################
+
+metadatafn <- "meta.xslx" 
+
+##########################################################################################
+#################### Choose the analysis method (MOTHUR or DADA2) ########################
+
+analysismethod <- "DADA2"  #available methods: DADA2 | MOTHUR
+taxassdone <- "no" #did you do TaxAss? (built for Mothur, could be adapted for DADA2)
+
+##########################################################################################
+#################### Remove spurious otu's based on set parameters #######################
+######################## Options: MAX or SUM, with set quantity ##########################
+##################### cropparam SUM cropamnt 1 will remove singletons ####################
+### cropparam MAX cropamnt 5 will keep any otu occuring at least 6 times in one sample ###
+
+cropparam <- "sum" #options: sum and max
+cropamnt <- 1 # any number you wish to use as crop parameter. Carefull with this!
+
+##########################################################################################
+##########################################################################################
+##########################################################################################
+##########################################################################################
+##########################################################################################
+dpi <- 600
+phyotu <- 25 # amount of ASVs or OTUs you wish to display in barplots
+targetspecies <- "Bacteria" # what do you want to keep? Can be more than one value. (Bacteria, Archaea, k__Fungi(!))
+if (analysismethod=="MOTHUR") {
+  binname <- "OTU"
+  species <- "no"
+}
+if (taxassdone=="yes") {
+  species <- "yes"
+}
+if (analysismethod=="DADA2") {
+  binname <- "ASV"
+}
+# Check if species were asked in DADA2 pipeline
+if (analysismethod == "DADA2"){
+  if (file.exists(paste(fldr,"/DADA2/ASVtax138.species.csv",sep=""))){
+    species <- "yes"
+  } else {
+    species <- "no"
+  }
+}
+#### set output location -------------------------------------------------------
+if(!dir.exists(file.path("REPORT_files"))){
+  dir.create(file.path("REPORT_files"),recursive=TRUE)}
+outputloc <- file.path("REPORT_files")
+```
+
+
+```{r Loading libraries,cache=TRUE,warning=FALSE,message=FALSE,echo=FALSE}
+library("ggplot2") # plots
+library("phyloseq") # seq data
+library("dplyr") # manipulate data
+library("RColorBrewer") # colors
+library("knitr") # manipulate data
+library("scales") # For log transformation
+library("vegan") # For rarefaction curves
+library("readxl") # read metadata
+library("psadd") # krona plots from phyloseq object
+library("ggrepel") # add label to ggplots
+```
+
+
+```{r Step1: Loading data,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%", echo=FALSE}
+if(analysismethod == "DADA2"){
+  print("you are using DADA2")
+  tax <- read.csv(paste(fldr,"/DADA2/ASVtax138.csv",sep=""),header = TRUE, row.names = 1)#only change this for rdp
+  tab <- read.csv(paste(fldr,"/DADA2/ASVtable.csv",sep=""),header = TRUE, row.names = 1)
+  fas <- read.csv(paste(fldr,"/DADA2/ASVfasta.csv",sep=""),header = TRUE, row.names = 1)
+  tra <- read.csv(paste(fldr,"/DADA2/track.csv",sep=""),header = TRUE, row.names = 1)
+} else if (analysismethod == "MOTHUR"){
+  print("you are using MOTHUR")
+  tax <- read.csv(paste(fldr,"/AmpliMET/MOTHUR/OTUtax138.csv",sep=""),header = TRUE, row.names = 1)
+  tab <- read.csv(paste(fldr,"/AmpliMET/MOTHUR/OTUtable.csv",sep=""),header = TRUE, row.names = 1)
+  fas <- read.csv(paste(fldr,"/AmpliMET/MOTHUR/OTUfasta.csv",sep=""),header = TRUE, row.names = 1)
+  tra <- read.csv(paste(fldr,"/AmpliMET/MOTHUR/track.csv",sep=""),header = TRUE, row.names = 1)
+} else {
+  print("No processing method found! This script needs DADA2 or MOTHUR output. Please correct.")
+}
+
+if(taxassdone=="yes"){
+  taxori <- tax
+  # Custom TaxASS script
+  taxass <- read.csv(paste(fldr,"/TaxAss_files/otus.98.taxonomy.reformatted",sep=""),header = FALSE, row.names = 1,sep=";",na.strings=c("","NA"))
+  taxass = subset(taxass, select = -c(V9) )
+  colnames(taxass) <- c(colnames(tax),"Species")
+  taxass <- taxass %>% arrange(rownames(taxass))
+  taxa_silva.clean <- taxass
+  library("tidyverse")
+  taxa_silva.clean <- taxa_silva.clean %>% separate(Kingdom, c("Kingdom", "prob_r"), "\\(", extra = "drop")
+  taxa_silva.clean <- taxa_silva.clean %>% separate(Phylum, c("Phylum", "prob_p"), "\\(", extra = "drop")
+  taxa_silva.clean <- taxa_silva.clean %>% separate(Class, c("Class", "prob_c"), "\\(", extra = "drop")
+  taxa_silva.clean <- taxa_silva.clean %>% separate(Order, c("Order", "prob_o"), "\\(", extra = "drop")
+  taxa_silva.clean <- taxa_silva.clean %>% separate(Family, c("Family", "prob_f"), "\\(", extra = "drop")
+  taxa_silva.clean <- taxa_silva.clean %>% separate(Genus, c("Genus", "prob_g"), "\\(", extra = "drop")
+  taxa_silva.clean <- taxa_silva.clean %>% separate(Species, c("Species", "prob_s"), "\\(", extra = "drop")
+  taxa_silva.clean[] <- lapply(taxa_silva.clean, gsub, pattern=')', replacement='')
+  taxa_silva.probs <- taxa_silva.clean # we should report these probabilities somewhere I suppose?
+  taxa_silva.clean <- subset(taxa_silva.clean, select = c(Kingdom,Phylum,Class,Order,Family,Genus,Species))
+  tax <- taxa_silva.clean
+}
+
+
+
+if (species == "yes"){
+  if (analysismethod == "DADA2") {
+    tax <- read.csv(paste(fldr,"/DADA2/ASVtax138.species.csv",sep=""),header = TRUE, row.names = 1)
+  }
+}
+
+# graph colors and set-up
+nsamp <- ncol(tab)
+basecol <- colorRampPalette(brewer.pal(11, "Spectral"))(8)
+# colorvec=c("#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe","#9E0142","#EE6445","#FA9C58","#FEF0A7","#F3FAAD","#D0EC9C","#98D5A4","#5CB7A9","#3682BA","#5e4fa2","#004692", "#a24f7e")
+colorvec=c("#a24f7e","#004692","#5e4fa2","#3682BA","#5CB7A9","#98D5A4","#D0EC9C","#F3FAAD","#FEF0A7","#FA9C58","#EE6445","#9E0142","#fabebe","#bcf60c","#f032e6","#46f0f0","#911eb4","#f58231","#4363d8","#ffe119","#3cb44b","#e6194b")
+mycolors <- head(colorvec,phyotu)
+wid <- 8
+high <- ((as.numeric(nsamp))+1)/2
+if (nsamp > 30) {
+  highknit <- ((as.numeric(nsamp))+1)/6
+} else if (nsamp > 12) {
+  highknit <- ((as.numeric(nsamp))+1)/3.5
+} else if (nsamp > 6) {
+  highknit <- ((as.numeric(nsamp))+1)/2
+} else if (nsamp > 3) {
+  highknit <- ((as.numeric(nsamp))+1)/1.5
+} else if (nsamp > 2) {
+  highknit <- ((as.numeric(nsamp))+1)
+} else if (nsamp > 1) {
+  highknit <- ((as.numeric(nsamp))+2)
+} else {
+  highknit <- ((as.numeric(nsamp))+3)
+}
+standknit <- 3
+
+# Clean up NA from tax table --> adapt at OTU.tax in excel!
+if (species == "yes") {
+  tax.clean <- data.frame(tax)
+  for (i in 1:7){ tax.clean[,i] <- as.character(tax.clean[,i])}
+  tax.clean[is.na(tax.clean)] <- ""
+  for (i in 1:nrow(tax.clean)){
+    if (tax.clean[i,2] == ""){
+      kingdom <- paste("K_", tax.clean[i,1], sep = "")
+      tax.clean[i, 2:7] <- kingdom
+    } else if (tax.clean[i,3] == ""){
+      phylum <- paste("P_", tax.clean[i,2], sep = "")
+      tax.clean[i, 3:7] <- phylum
+    } else if (tax.clean[i,4] == ""){
+      class <- paste("C_", tax.clean[i,3], sep = "")
+      tax.clean[i, 4:7] <- class
+    } else if (tax.clean[i,5] == ""){
+      order <- paste("O_", tax.clean[i,4], sep = "")
+      tax.clean[i, 5:7] <- order
+    } else if (tax.clean[i,6] == ""){
+      family <- paste("F_", tax.clean[i,5], sep = "")
+      tax.clean[i, 6:7] <- family
+    } else if (tax.clean[i,7] == ""){
+      genus <- paste("G_", tax.clean[i,6], sep = "")
+      tax.clean[i, 7:7] <- genus
+    }
+  }
+} else {
+  tax.clean <- data.frame(tax)
+  for (i in 1:6){ tax.clean[,i] <- as.character(tax.clean[,i])}
+  tax.clean[is.na(tax.clean)] <- ""
+  for (i in 1:nrow(tax.clean)){
+    if (tax.clean[i,2] == ""){
+      kingdom <- paste("K_", tax.clean[i,1], sep = "")
+      tax.clean[i, 2:6] <- kingdom
+    } else if (tax.clean[i,3] == ""){
+      phylum <- paste("P_", tax.clean[i,2], sep = "")
+      tax.clean[i, 3:6] <- phylum
+    } else if (tax.clean[i,4] == ""){
+      class <- paste("C_", tax.clean[i,3], sep = "")
+      tax.clean[i, 4:6] <- class
+    } else if (tax.clean[i,5] == ""){
+      order <- paste("O_", tax.clean[i,4], sep = "")
+      tax.clean[i, 5:6] <- order
+    } else if (tax.clean[i,6] == ""){
+      family <- paste("F_", tax.clean[i,5], sep = "")
+      tax.clean[i, 6:6] <- family
+    }
+  }
+}
+if (file.exists(paste(fldr,"/meta.xlsx",sep=""))){
+  print("I found a metadata file and will use it downstream.")
+  metadata.tibble <- readxl::read_excel(paste(fldr,"/meta.xlsx",sep=""),sheet=1)
+  metavars <- colnames(metadata.tibble)[3:ncol(metadata.tibble)]
+  metavars <- metavars[metavars != "FC" ]
+  varnum <- as.numeric(length(metavars))
+  if(ncol(metadata.tibble)==2){
+    varnum <- 0
+  }
+  metadata <- as.data.frame(metadata.tibble)
+  # Rename the samples
+  #colnames(tab) <- plyr::mapvalues(colnames(tab),from=as.character(metadata$Code),to=as.character(metadata$SampleName))
+  #samplenames <- colnames(tab) # vector of the sample names
+  # Check for samples that do not need to be included in the analysis ------------
+  metadata.incl <- metadata %>% dplyr::filter(SampleName!="Not_included")
+  metadata <- metadata.incl
+  metadata.tibble <- metadata.tibble[!(metadata.tibble$SampleName=="Not_included"),]
+} else if (analysismethod == "MOTHUR"){
+  print("I didn't find a metadata file, so I'll create a default one using MOTHUR output")
+  varnum <- 0 # there are no variables in case we generate a metadata file
+  metadata.tibble <- read.delim("/Projects1/Fien/BiofilmRings/ngs/Input/stability.files", header = FALSE, sep = "\t")
+  metadata <- as.data.frame(metadata.tibble$V1)
+  colnames(metadata)[1] <- 'SampleName'
+  colnames(metadata.tibble)[1] <- 'SampleName'
+} else if (analysismethod == "DADA2"){
+  print("I didn't find a metadata file, so I'll create a default one using DADA2 output")
+  varnum <- 0 # there are no variables in case we generate a metadata file
+  metadata.tibble <- read.csv("DADA2/track.csv", header = TRUE)
+  metadata <- as.data.frame(metadata.tibble$X)
+  colnames(metadata)[1] <- 'SampleName'
+  colnames(metadata.tibble)[1] <- 'SampleName'
+} else {
+  print("No metadata file found or generated. Please correct!")
+}
+metadata
+# Add correct sample names to metadata (rownames)
+rownames(metadata) <- metadata$SampleName
+# refseq fasta sequences
+fassub <- as.data.frame(gsub("-", "", fas[,1]))
+seqs = as.character(fassub[,1])
+names(seqs) <- rownames(fas) # This propagates to the tip labels of the tree
+fas.phy <- as(seqs,"DNAStringSet")
+# Create objects for phyloseq
+tab.phy <- phyloseq::otu_table(tab, taxa_are_rows = TRUE)
+tax.phy <- phyloseq::tax_table(as.matrix(tax.clean))
+sam.phy <- phyloseq::sample_data(metadata)
+phylobj <- phyloseq(tab.phy, tax.phy, sam.phy, fas.phy)
+phylobj <- subset_taxa(phylobj, Kingdom %in% targetspecies) # make sure to remove anything non bacterial
+phylobj <- prune_samples(sample_sums(phylobj) >= 2, phylobj) # remove samples with less than 2 reads
+# Remove empty samples
+tab.clean <- data.frame(otu_table(phylobj))
+if (ncol(tab.clean)>1){
+  tab.clean = tab.clean[,colSums(tab.clean) > 0]
+  otu_table(phylobj) <- otu_table(tab.clean, taxa_are_rows = TRUE)
+}
+# Remove singletons
+tab.clean.filter <- data.frame(otu_table(phylobj))
+tab.clean.filter$filter <- apply(tab.clean.filter, 1, cropparam) #create col with maximum
+tab.clean.filter <- tab.clean.filter[tab.clean.filter[,ncol(tab.clean.filter)]>cropamnt,]
+tab.filter.phy <- phyloseq::otu_table(tab.clean.filter, taxa_are_rows = TRUE)
+phylobj.filter <- merge_phyloseq(tab.filter.phy, tax_table(phylobj), sample_data(phylobj), refseq(phylobj) )
+phylobj <- phylobj.filter
+# Filtered output
+rep.tax <- as.data.frame(tax_table(phylobj))
+rep.otu <- as.data.frame(otu_table(phylobj))
+rep.fas <- as.data.frame(refseq(phylobj))
+colnames(rep.fas) <- "Sequence"
+rep <- cbind(rep.tax,rep.otu,rep.fas)
+# Create report at the current stage
+wb <- openxlsx::write.xlsx(x = rep, rowNames = TRUE, file = paste("REPORT_files/", analysismethod,"_REPORT.xlsx",sep=""), sheetName = "absolute_filtered", overwrite = TRUE)
+openxlsx::addWorksheet(wb,sheetName = "probability")
+#openxlsx::writeData(wb,sheet="probability",x=taxa_silva.probs, rowNames = FALSE)
+openxlsx::saveWorkbook(wb,file = paste("REPORT_files/", analysismethod,"_REPORT.xlsx",sep=""),overwrite=TRUE)
+
+# Add rel abund (obv genus (6 number is genus, number 5 is family); only last line is based on ASV)
+phylobjn_genus <- tax_glom(phylobj, taxrank=rank_names(phylobj)[5], NArm=TRUE, bad_empty=c(NA, "", " ", "\t"))
+phylobjn_relab <- transform_sample_counts(phylobjn_genus, function(otu) otu / sum(otu) )
+
+# convert
+rep.tax <- as.data.frame(tax_table(phylobjn_relab))
+rep.otu <- as.data.frame(otu_table(phylobjn_relab))
+rep.fas <- as.data.frame(refseq(phylobjn_relab))
+colnames(rep.fas) <- "Sequence"
+rep <- cbind(rep.tax,rep.otu,rep.fas)
+openxlsx::addWorksheet(wb,sheetName = "relative_filtered")
+openxlsx::writeData(wb,sheet="relative_filtered",x=rep, rowNames = TRUE)
+openxlsx::saveWorkbook(wb,file = paste("REPORT_files/", analysismethod,"_REPORT.xlsx",sep=""),overwrite=TRUE)
+
+#install.packages("writexl")
+library("writexl")
+write_xlsx(rep,"/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/rep_data_dada2_order.xlsx")
+
+if(file.exists(paste(fldr,"/REPORT_files/krona",sep=""))) {
+  system(paste("rm -r ",fldr,"/REPORT_files/krona",sep=""))
+}
+#plot_krona(phylobj, "REPORT_files/krona", "SampleName", trim = F)
+```
+
+
+```{r Step2: Plot data,cache=TRUE,warning=FALSE,message=FALSE,dpi=dpi,out.width="100%", echo=FALSE}
+# load  packages 
+library(VennDiagram)
+library(scales)   #for percent formatting
+library(ggplot2)  #for adequate plotting
+library(plyr)     #data wrangling (mapvalues)
+library(tidyr)    #tidy data
+library(phyloseq) #for microbiome census data processing
+library(ade4)     #for ecological calculations
+library(splitstackshape) #for csplit
+library(knitr)    #for simple markdown tables
+library(xtable)   #for more advanced tables
+library(ape)      #dealing with phylogenetic trees
+library("openxlsx") #handling Excel files without Java deps
+library(readxl)   #faster handling of excel files
+library(data.table) #data wrangling
+library(SPECIES)  #alpha diversity estimators
+library(parallel) #parallel computation in R
+library(RCM) # advanced ordination
+library(RColorBrewer)
+library(car) #for Anova data analysis
+library(stringr)
+library(cowplot)
+library(lattice)
+library(gridExtra)
+library(grid)
+library("tibble")
+library("edgeR")
+library("magrittr")
+library(gganimate)
+library(ggrepel)
+library(dplyr)
+library(vegan)
+library(microbiome)
+#install.packages("writexl")
+
+###### Change the family order .... 
+otus_tbl <- cbind(rep.tax$Family, rep.otu)
+#rownames(otus_tbl) <- rep.tax$family
+
+# Make dataframe for plotting
+otus <- data.frame(otus_tbl)
+otus$Family <- rownames(otus_tbl)
+otus_m <- data.frame(na.omit(reshape2::melt(otus)))
+otus_m$variable <- as.character(otus_m$variable)
+otus_m$value <- as.numeric(otus_m$value)
+metadata.s <- data.frame(do.call(rbind, lapply(strsplit((otus_m$variable),"_"), rbind)))
+otus_m <- cbind(otus_m,metadata.s)
+otus_m <- otus_m[,-2]
+colnames(otus_m) <- c("Family","Full_name","Abundance","Time","Condition", "Place", "Replicate", "Method")
+
+otus_original <- otus_m
+otus_original <-otus_original[-c(2,8)]
+otus_original$Time <- as.factor(otus_original$Time)
+levels(otus_original$Time) <- c("After 11 months", "After 17 months")
+otus_original$Time <- as.character(otus_original$Time)
+
+
+#### Take out: Bulk, Biofilm per Place otus_original$Condition == "Biof" & 
+otus_original <- otus_original[otus_original$Condition != "Bulk",]
+otus_OT <- otus_original[otus_original$Place == "OT",]
+otus_SK <- otus_original[otus_original$Place == "SK",]
+
+# Average for the replicates OT
+otus_OT.sum <- aggregate(x=otus_OT$Abundance,
+                          by=list(otus_OT$Family, otus_OT$Time, otus_OT$Condition,otus_OT$Place), 
+                        FUN= function(x) c(avg = mean(x), sdev = sd(x)))
+
+otus_OT.sum <- data.frame(cbind(otus_OT.sum[,1:4],otus_OT.sum$x[,1:2]))
+colnames(otus_OT.sum) <- c("Family","Time","Condition", "Place", "Abundance","Sd.Abundance")
+
+# Average for the replicates SK
+otus_SK.sum <- aggregate(x=otus_SK$Abundance,
+                          by=list(otus_SK$Family, otus_SK$Time, otus_SK$Condition,otus_SK$Place), 
+                        FUN= function(x) c(avg = mean(x), sdev = sd(x)))
+
+otus_SK.sum <- data.frame(cbind(otus_SK.sum[,1:4],otus_SK.sum$x[,1:2]))
+colnames(otus_SK.sum) <- c("Family","Time","Condition", "Place", "Abundance","Sd.Abundance")
+
+
+# Ordenen obv abundanties 
+otus_OT.sum <- otus_OT.sum[order(-otus_OT.sum$Abundance),]
+otus_SK.sum <- otus_SK.sum[order(-otus_SK.sum$Abundance),]
+
+# Genus based
+TopGenera_OT <- as.factor(otus_OT.sum$Family[1:20])
+TopGenera_SK <- as.factor(otus_SK.sum$Family[1:17])
+
+AllGenera <- c("A0839","A4b","C_Alphaproteobacteria","C_JG30-KF-CM66","Gemmataceae", "Hyphomicrobiaceae","Hyphomonadaceae", "Ilumatobacteraceae", "O_IMCC26256","O_S085", "Rhizobiales Incertae Sedis", "Acetobacteraceae","Beijerinckiaceae", "Gemmatimonadaceae", "O_Puniceispirillales", "O_Rhodospirillales", "Obscuribacteraceae", "Parvularculaceae", "Phycisphaeraceae", "Sphingomonadaceae")
+
+# Add function defining "not in"
+`%!in%` <- purrr::compose(`!`, `%in%`)
+
+#dummy otu set
+otus_OT.sum2 <- otus_OT.sum 
+
+#Change to others (all genera less than 25 most abundant)
+otus_OT.sum[otus_OT.sum$Family %!in% TopGenera_OT,]$Family <- "Others"
+otus_SK.sum[otus_SK.sum$Family %!in% TopGenera_SK,]$Family <- "Others"
+otus_OT.sum2[otus_OT.sum2$Family %!in% AllGenera,]$Family <- "Others"
+
+# Reorder levels 
+old.lvl <- levels(as.factor(otus_OT.sum$Family))
+otus_OT.sum$Family <- factor(otus_OT.sum$Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
+
+old.lvl <- levels(as.factor(otus_SK.sum$Family))
+otus_SK.sum$Family <- factor(otus_SK.sum$Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
+
+
+old.lvl <- levels(as.factor(otus_OT.sum2$Family))
+otus_OT.sum2$Family <- factor(otus_OT.sum2$Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
+
+
+#### PLOT THEME ####
+
+# Standardised function for all figures so they are publishable
+papertheme <- function(ggplotobject){
+  library(ggplot2)  
+  ggplotnewobject <- ggplotobject + 
+    theme(axis.ticks.x = element_line(colour = "#696969",size=0.5), 
+          axis.ticks.y =element_line(colour = "#696969",size=0.5),
+          axis.ticks.length=unit(0.2,"cm"),
+          panel.background = element_rect(fill = "white"),
+          panel.grid.major=element_blank(),
+          panel.grid.minor=element_blank(),
+          axis.line.x  = element_blank(),
+          axis.line.y  = element_blank(),
+          plot.title = element_text(size = 16, family="sans", face="bold"),
+          axis.text.x = element_text(size = 14,colour="#696969",family="sans"),
+          axis.text.y = element_text(size = 14,colour="#696969",family="sans"),
+          axis.title.x = element_text(size =16,color="#696969",family="sans"),
+          axis.title.y = element_text(size=16,color="#696969",family="sans"),
+          strip.text.x = element_text(size = 14),
+          legend.key = element_blank(),
+          legend.text = element_text(size=12,family="sans", color="#696969"),
+          legend.title=element_text(size=13,family="sans", color="#696969", face = "bold"),
+          strip.background = element_blank(),
+          axis.line=element_blank(),
+          panel.border = element_rect(colour = "#696969",size=0.5, fill = "transparent"),
+          plot.margin = margin(0.5, 0.5, 0.5, 0, "cm"))+
+    guides(shape = guide_legend(override.aes = list(size = 1.5)),
+           color = guide_legend(override.aes = list(size = 1.5))) +
+    theme(legend.title = element_text(size = 10), 
+          legend.text  = element_text(size = 10),
+          legend.key.size = unit(0.1, "lines"))
+  return(ggplotnewobject)}
+
+
+# Load colour palette for all the graphs except bar data
+#values <- brewer.pal(12, "Set3")
+
+# Define colours
+#n <- 25 #n <- 19
+#qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'seq',]
+#speciesPalette <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+
+#install.packages("paletteer")
+library(paletteer)
+Palette <-paletteer_d("ggsci::default_igv")
+Palette_SK <- c("#5050FFFF", "#CE3D32FF", "#F0E685FF",  "#3B1B53FF","#CDDEB7FF", "#466983FF", "#D595A7FF",  "#5DB1DDFF",  "#802268FF",  "#6BD76BFF", "#BA6338FF")
+Palette_OT <- c("#5A655EFF",  "#C75127FF" , "#924822FF" , "#7A65A5FF" , "#E4AF69FF", "#3B1B53FF",  "#CDDEB7FF", "#612A79FF", "#CC9900FF", "#749B58FF", "#AE1F63FF")                 
+
+# Plot relative abundance
+plot_all_1_OT <- ggplot(otus_OT.sum[otus_OT.sum$Condition=="Biof",], aes(fill = Family, y = Abundance)) +
+  geom_bar(aes(x= Time), stat="identity", position="stack", colour="grey")
+  #facet_grid(.~Time,scales = "free_x")
+
+plot_all_1_OT <- papertheme(plot_all_1_OT) + 
+  labs(y="Relative abundance (-)", x="") +
+  theme(strip.text.y = element_text(face="bold", size=15),
+        strip.text.x = element_text(face="bold", size=12),
+        plot.title = element_text(hjust=0.5, size=22),
+        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        legend.text = element_text(size=15,family="sans"), 
+        axis.text.x = element_text(angle = -45, hjust = 0),
+        legend.key.size = unit(1,"line") ) +
+  scale_fill_manual(values= c("lightgrey", Palette_OT), name= "Family")+ 
+  theme_bw(base_size = 20, base_family = "")+
+  theme(legend.position="none")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+
+plot_all_1_OT
+
+plot_all_1_SK <- ggplot(otus_SK.sum[otus_SK.sum$Condition=="Biof",], aes(fill = Family, y = Abundance)) +
+  geom_bar(aes(x= Time), stat="identity", position="stack", colour="grey")
+  #facet_grid(.~Time,scales = "free_x")
+
+plot_all_1_SK <- papertheme(plot_all_1_SK) + 
+  labs(y="", x="") +
+  theme(strip.text.y = element_text(face="bold", size=15),
+        strip.text.x = element_text(face="bold", size=12),
+        plot.title = element_text(hjust=0.5, size=22),
+        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        legend.text = element_text(size=15,family="sans"), 
+        axis.text.x = element_text(angle = -45, hjust = 0),
+        legend.key.size = unit(1,"line") ) +
+  scale_fill_manual(values= c("lightgrey", Palette_SK), name= "Family")+ 
+  theme_bw(base_size = 20, base_family = "")+
+  theme(legend.position="none")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+
+plot_all_1_SK
+
+#  figure just for legend
+plot_all_1_OT_bt <- ggplot(otus_OT.sum2[otus_OT.sum2$Condition=="Biof",], aes(fill = Family, y = Abundance)) +
+  geom_bar(aes(x= Time), stat="identity", position="stack", colour="grey")
+
+plot_all_1_OT_bt <- papertheme(plot_all_1_OT_bt) + 
+  labs(y="Relative abundance (-)", x="") +
+  theme(strip.text.y = element_text(face="bold", size=15),
+        strip.text.x = element_text(face="bold", size=12),
+        plot.title = element_text(hjust=0.5, size=22),
+        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        legend.text = element_text(size=15,family="sans"), 
+        axis.text.x = element_text(angle = -45, hjust = 0),
+        legend.key.size = unit(1,"line") ) +
+  scale_fill_manual(values= c("Others"="lightgrey", "A0839"="#5A655EFF", "A4b"= "#C75127FF" , "C_Alphaproteobacteria"="#924822FF" ,"C_JG30-KF-CM66"= "#7A65A5FF" , "Gemmataceae"="#E4AF69FF", "Hyphomicrobiaceae"="#3B1B53FF", "Hyphomonadaceae"= "#CDDEB7FF","Ilumatobacteraceae"= "#612A79FF",  "O_IMCC26256"="#CC9900FF", "O_S085" = "#749B58FF","Rhizobiales Incertae Sedis"= "#AE1F63FF","Acetobacteraceae"="#5050FFFF", "Beijerinckiaceae"= "#CE3D32FF", "Gemmatimonadaceae"= "#F0E685FF", "O_Puniceispirillales" = "#466983FF", "O_Rhodospirillales" = "#D595A7FF","Obscuribacteraceae" = "#5DB1DDFF", "Parvularculaceae"= "#802268FF", "Phycisphaeraceae"= "#6BD76BFF", "Sphingomonadaceae" = "#BA6338FF"), name= "Family") +
+  guides(fill = guide_legend(ncol = 1, direction = "vertical"))+
+  theme_bw(base_size = 20, base_family = "")+
+  #theme(legend.position="right", legend.box = "vertical")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+
+plot_all_1_OT_bt
+
+library(ggpubr)
+
+# Extract the combined legend from dummy figure
+legend_merged <- get_legend(plot_all_1_OT_bt)
+
+
+#combine with patchwork
+#combined_plot <- plot_all_1_OT +
+#                 plot_all_1_SK + 
+#                 plot_layout(ncol = 2) + 
+#                 as_ggplot(legend_merged)
+
+
+combined <- ggarrange(
+  plot_all_1_OT, plot_all_1_SK, as_ggplot(legend_merged), labels = c("A", "B", ""),font.label = list(size = 16),nrow =1)
+combined
+
+# Export
+dpi=300
+png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/combined.png",width=15*dpi,height=7*dpi,res=dpi)
+combined
+dev.off()
+
+# combine the figure with A and B and combined legend using draw_plot
+combined_plot2 <- ggdraw() +
+  draw_plot(plot_all_1_OT, 0, 0.25, 0.5, 0.75) +
+  draw_plot(plot_all_1_SK, 0.5, 0.25 ,0.5, 0.75) +
+  draw_plot(as_ggplot(legend_merged), 0, 0, 1, .25) +
+  draw_plot_label(c("A", "B"), c(0, 0.5), c(1, 1), size = 15)
+combined_plot2
+
+
+
+### Supplementary plot with everything
+
+otus_m$Time <- as.factor(otus_m$Time)
+levels(otus_m$Time) <- c("After 11 months", "After 17 months")
+otus_m$Time <- as.character(otus_m$Time)
+
+otus_m$Repl_Time <- paste(otus_m$Time, "_", otus_m$Replicate)
+
+otus_m$Condition <- as.factor(otus_m$Condition)
+levels(otus_m$Condition) <- c("Biofilm", "Bulk")
+otus_m$Condition <- as.character(otus_m$Condition)
+
+otus_m$Place <- as.factor(otus_m$Place)
+levels(otus_m$Place) <- c("Treated groundwater", "Treated surface water")
+otus_m$Place <- as.character(otus_m$Place)
+
+# Ordenen obv abundanties 
+otus_m <- otus_m[order(-otus_m$Abundance),]
+TopGenera_m <- as.factor(otus_m$Family[1:75])
+
+# Add function defining "not in"
+`%!in%` <- purrr::compose(`!`, `%in%`)
+
+#Change to others (all genera less than 25 most abundant)
+otus_m[otus_m$Family %!in% TopGenera_m,]$Family <- "Others"
+
+# Reorder levels 
+old.lvl <- levels(as.factor(otus_m$Family))
+otus_m$Family <- factor(otus_m$Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
+
+# Load colour palette for all the graphs except bar data
+#values <- brewer.pal(12, "Set3")
+
+# Define colours
+#n <- 25 #n <- 19
+#qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'seq',]
+#speciesPalette <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+
+#install.packages("paletteer")
+library(paletteer)
+Palette <-paletteer_d("ggsci::default_igv")
+
+
+
+# Plot relative abundance
+plot_all <- ggplot(otus_m, aes(fill = Family, y = Abundance)) +
+  geom_bar(aes(x= Repl_Time), stat="identity", position="stack", colour="grey")+
+  facet_grid(rows = vars(Place), cols = vars(Condition), scales = "free_x")
+
+plot_all <- papertheme(plot_all) + 
+  labs(y="Relative abundance (-)", x="") +
+  theme(strip.text.y = element_text(face="bold", size=15),
+        strip.text.x = element_text(face="bold", size=12),
+        plot.title = element_text(hjust=0.5, size=22),
+        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        legend.text = element_text(size=15,family="sans"), 
+        axis.text.x = element_text(angle = -45, hjust = 0),
+        legend.key.size = unit(1,"line") ) +
+  scale_fill_manual(values= c("lightgrey", Palette), name= "Family")+ 
+  guides(fill = guide_legend(ncol = 1, direction = "vertical"))+
+  #theme_bw(base_size = 20, base_family = "")+
+  #theme(legend.position="none")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+
+plot_all
+
+# Export
+dpi=300
+png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/suppl.png",width=16*dpi,height=8*dpi,res=dpi)
+plot_all
+dev.off()
+
+
+### Keer phylum, class etc 
+
+###### Change the family order .... 
+otus_tbl <- cbind(rep.tax$Order, rep.otu)
+#rownames(otus_tbl) <- rep.tax$family
+
+# Make dataframe for plotting
+otus <- data.frame(otus_tbl)
+otus$Phylum <- rownames(otus_tbl)
+otus_m <- data.frame(na.omit(reshape2::melt(otus)))
+otus_m$variable <- as.character(otus_m$variable)
+otus_m$value <- as.numeric(otus_m$value)
+metadata.s <- data.frame(do.call(rbind, lapply(strsplit((otus_m$variable),"_"), rbind)))
+otus_m <- cbind(otus_m,metadata.s)
+otus_m <- otus_m[,-2]
+colnames(otus_m) <- c("Phylum","Full_name","Abundance","Time","Condition", "Place", "Replicate", "Method")
+otus_m$Repl_Time <- paste(otus_m$Time, "_", otus_m$Replicate)
+
+# Plot relative abundance
+plot_all <- ggplot(otus_m, aes(fill = Phylum, y = Abundance)) +
+  geom_bar(aes(x= Repl_Time), stat="identity", position="stack", colour="grey")+
+  facet_grid(rows = vars(Place), cols = vars(Condition), scales = "free_x")
+
+plot_all <- papertheme(plot_all) + 
+  labs(y="Relative abundance (-)", x="") +
+  theme(strip.text.y = element_text(face="bold", size=15),
+        strip.text.x = element_text(face="bold", size=12),
+        plot.title = element_text(hjust=0.5, size=22),
+        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
+        legend.text = element_text(size=15,family="sans"), 
+        axis.text.x = element_text(angle = -45, hjust = 0),
+        legend.key.size = unit(1,"line") ) +
+  #scale_fill_manual(values= c("lightgrey", Palette), name= "Order")+ 
+  #theme_bw(base_size = 20, base_family = "")+
+  #theme(legend.position="none")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+
+plot_all
+
+# Export
+dpi=300
+png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/suppl_order.png",width=16*dpi,height=6*dpi,res=dpi)
+plot_all
+dev.off()
+
+```
+
+```{r Step3: betadiversity plot (bulk,biof reps)}
+subset_physeq <- subset_samples(phylobj, Condition != "Bulk")
+
+# Transform data to proportions as appropriate for Bray-Curtis distances
+phylobj.prop <- transform_sample_counts(phylobj, function(otu) otu/sum(otu))
+ord.pcoa.bray <- ordinate(phylobj.prop, method="PCoA", distance="bray")
+
+ord.pcoa.bray.co <- data.frame(ord.pcoa.bray[["vectors"]])
+ord.pcoa.bray.co$id <- c(22,59,23,60,80,24,61,81,82,47,86,87,16,48,88,17,49,18)
+ord.pcoa.bray.co <- ord.pcoa.bray.co[order(ord.pcoa.bray.co$id),]
+
+# berekening eigenvalues (eigenvalues zijn x% op as)
+var <- round(100*ord.pcoa.bray$values$Eigenvalues/(sum(ord.pcoa.bray$values$Eigenvalues)),1)
+
+# Enkel axis.1 en axis 2 plotten (zijn er 47 in totaal?)
+# ord.pcoa.bray.co <- ord.pcoa.bray.co[,1:2]
+
+metadata_3 <- cbind(metadata, ord.pcoa.bray.co)
+# metadata_3 <- cbind(metadata, ord.nmds.bray.co)
+metadata_3$Condition <- as.factor(metadata_3$Condition)
+levels(metadata_3$Condition) <- c("Biofilm", "Bulk")
+metadata_3$Time <- as.factor(metadata_3$Time)
+levels(metadata_3$Time) <- c("T1", "T2")
+
+# PCoA in totaal
+PCOA_seq <- metadata_3 %>% ggplot() +
+  geom_point(aes(x = Axis.1, y = Axis.2, shape = Condition, color = Place),
+             size = 5, alpha = 1, show.legend = TRUE) +
+  geom_text(aes(x = Axis.1, y = Axis.2, label = Time),
+             nudge_x = 0, nudge_y = 0.02) +
+  labs(x = paste0("Axis1 (", var[1], "%)"), y = paste0("Axis2 (", var[2], "%)")) +
+  coord_fixed(ratio = 1) +
+  scale_shape_manual(values = c(16, 17), name = "", labels = c("Biofilm", "Bulk")) +
+  scale_color_brewer(palette = "Accent", name = "",
+                     labels = c("Treated groundwater", "Treated surface water")) +
+  guides(shape = guide_legend(order = 1), color = guide_legend(order = 2)) +
+  theme_bw(base_size = 20, base_family = "") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+
+PCOA_seq
+
+dpi=400
+png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/PCOA.png",width=10*dpi,height=10*dpi,res=dpi)
+PCOA_seq
+dev.off()
+```
+
+```{r Step4: statistics}
+subset_physeq <- subset_samples(phylobj, Condition != "Bulk")
+subset_physeq <- subset_samples(subset_physeq, Place == "SK")
+subset_physeq <- subset_samples(subset_physeq, Time == "2")
+
+
+# Calculate dissimilarity matrix
+input.dist <- phyloseq::distance(subset_physeq, method="bray")
+
+# statistics
+adonis2(input.dist ~ sample_data(subset_physeq)$Place, permutations = 999)
+library(vegan)
+anosim(input.dist, sample_data(subset_physeq)$Place, permutations = 999) #same
+
+```
+
+```{r Step5: for the paper: plot with the EPS info}
+combined4 <- ggarrange(
+  PCOA_seq, plot_biomass, nrow = 1, labels = c("C", "D"),font.label = list(size = 16),
+  common.legend = TRUE, legend = "bottom")
+combined4
+  
+combined_paper <- ggarrange(
+  combined, combined4, ncol =1)
+combined_paper
+
+# Export
+dpi=400
+png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/combined_paper2.png",width=16*dpi,height=14*dpi,res=dpi)
+combined_paper
+dev.off()
+
+### combined appendix
+install.packages("ggpubr")
+library("ggpubr")
+
+combined_appendix <- ggarrange(plot_all, PCOA_seq, nrow = 1, labels = c("A","B"),font.label = list(size = 16))
+combined_appendix
+
+# Export
+dpi=300
+png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/combined_appendix.png",width=16*dpi,height=8*dpi,res=dpi)
+combined_appendix
+dev.off()
+```

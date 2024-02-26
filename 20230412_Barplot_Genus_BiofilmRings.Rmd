@@ -15,7 +15,7 @@ runtime: shiny
 ########## Enter the file location of your fastq files below (no trailing slash) #########
 
 # fldr <- "/Projects1/timNGSjobs/amplidev" # manual directory override
-fldr <- "/Projects1/Fien/BiofilmRings/ngs/Input" # assumes your project is in the folder where fastq files live
+fldr <- "/Projects1/Fien/BiofilmRings_2023/ngs/Input" # assumes your project is in the folder where fastq files live
 
 ##########################################################################################
 # Enter the name of your metadata file (or just leave at default if you don't have one) ##
@@ -343,7 +343,8 @@ library(microbiome)
 #install.packages("writexl")
 
 ###### Change the family order .... 
-otus_tbl <- cbind(rep.tax$Family, rep.otu)
+rep.tax$merge <- paste(rep.tax$Phylum, rep.tax$Family, sep = "_")
+otus_tbl <- cbind(rep.tax$merge, rep.otu)
 #rownames(otus_tbl) <- rep.tax$family
 
 # Make dataframe for plotting
@@ -375,7 +376,7 @@ otus_OT.sum <- aggregate(x=otus_OT$Abundance,
                         FUN= function(x) c(avg = mean(x), sdev = sd(x)))
 
 otus_OT.sum <- data.frame(cbind(otus_OT.sum[,1:4],otus_OT.sum$x[,1:2]))
-colnames(otus_OT.sum) <- c("Family","Time","Condition", "Place", "Abundance","Sd.Abundance")
+colnames(otus_OT.sum) <- c("Phylum_Family","Time","Condition", "Place", "Abundance","Sd.Abundance")
 
 # Average for the replicates SK
 otus_SK.sum <- aggregate(x=otus_SK$Abundance,
@@ -383,7 +384,7 @@ otus_SK.sum <- aggregate(x=otus_SK$Abundance,
                         FUN= function(x) c(avg = mean(x), sdev = sd(x)))
 
 otus_SK.sum <- data.frame(cbind(otus_SK.sum[,1:4],otus_SK.sum$x[,1:2]))
-colnames(otus_SK.sum) <- c("Family","Time","Condition", "Place", "Abundance","Sd.Abundance")
+colnames(otus_SK.sum) <- c("Phylum_Family","Time","Condition", "Place", "Abundance","Sd.Abundance")
 
 
 # Ordenen obv abundanties 
@@ -391,10 +392,12 @@ otus_OT.sum <- otus_OT.sum[order(-otus_OT.sum$Abundance),]
 otus_SK.sum <- otus_SK.sum[order(-otus_SK.sum$Abundance),]
 
 # Genus based
-TopGenera_OT <- as.factor(otus_OT.sum$Family[1:20])
-TopGenera_SK <- as.factor(otus_SK.sum$Family[1:17])
+TopGenera_OT <- as.factor(otus_OT.sum$Phylum_Family[1:20])
+TopGenera_SK <- as.factor(otus_SK.sum$Phylum_Family[1:17])
 
 AllGenera <- c("A0839","A4b","C_Alphaproteobacteria","C_JG30-KF-CM66","Gemmataceae", "Hyphomicrobiaceae","Hyphomonadaceae", "Ilumatobacteraceae", "O_IMCC26256","O_S085", "Rhizobiales Incertae Sedis", "Acetobacteraceae","Beijerinckiaceae", "Gemmatimonadaceae", "O_Puniceispirillales", "O_Rhodospirillales", "Obscuribacteraceae", "Parvularculaceae", "Phycisphaeraceae", "Sphingomonadaceae")
+
+AllGenera <- c("Actinobacteriota_Ilumatobacteraceae", "Actinobacteriota_O_IMCC26256", "Chloroflexi_A4b", "Chloroflexi_C_JG30-KF-CM66","Chloroflexi_O_S085" ,"Planctomycetota_Gemmataceae","Proteobacteria_A0839", "Proteobacteria_C_Alphaproteobacteria", "Proteobacteria_Hyphomicrobiaceae", "Proteobacteria_Hyphomonadaceae", "Proteobacteria_Rhizobiales Incertae Sedis", "Cyanobacteria_Obscuribacteraceae", "Gemmatimonadota_Gemmatimonadaceae"   , "Planctomycetota_Phycisphaeraceae", "Proteobacteria_Acetobacteraceae", "Proteobacteria_Beijerinckiaceae"   , "Proteobacteria_Hyphomicrobiaceae","Proteobacteria_Hyphomonadaceae", "Proteobacteria_O_Puniceispirillales", "Proteobacteria_O_Rhodospirillales" , "Proteobacteria_Parvularculaceae" ,"Proteobacteria_Sphingomonadaceae" )
 
 # Add function defining "not in"
 `%!in%` <- purrr::compose(`!`, `%in%`)
@@ -403,20 +406,19 @@ AllGenera <- c("A0839","A4b","C_Alphaproteobacteria","C_JG30-KF-CM66","Gemmatace
 otus_OT.sum2 <- otus_OT.sum 
 
 #Change to others (all genera less than 25 most abundant)
-otus_OT.sum[otus_OT.sum$Family %!in% TopGenera_OT,]$Family <- "Others"
-otus_SK.sum[otus_SK.sum$Family %!in% TopGenera_SK,]$Family <- "Others"
-otus_OT.sum2[otus_OT.sum2$Family %!in% AllGenera,]$Family <- "Others"
+otus_OT.sum[otus_OT.sum$Phylum_Family %!in% TopGenera_OT,]$Phylum_Family <- "Others"
+otus_SK.sum[otus_SK.sum$Phylum_Family %!in% TopGenera_SK,]$Phylum_Family <- "Others"
+otus_OT.sum2[otus_OT.sum2$Phylum_Family %!in% AllGenera,]$Phylum_Family <- "Others"
 
 # Reorder levels 
-old.lvl <- levels(as.factor(otus_OT.sum$Family))
-otus_OT.sum$Family <- factor(otus_OT.sum$Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
+old.lvl <- levels(as.factor(otus_OT.sum$Phylum_Family))
+otus_OT.sum$Phylum_Family <- factor(otus_OT.sum$Phylum_Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
 
-old.lvl <- levels(as.factor(otus_SK.sum$Family))
-otus_SK.sum$Family <- factor(otus_SK.sum$Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
+old.lvl <- levels(as.factor(otus_SK.sum$Phylum_Family))
+otus_SK.sum$Phylum_Family <- factor(otus_SK.sum$Phylum_Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
 
-
-old.lvl <- levels(as.factor(otus_OT.sum2$Family))
-otus_OT.sum2$Family <- factor(otus_OT.sum2$Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
+old.lvl <- levels(as.factor(otus_OT.sum2$Phylum_Family))
+otus_OT.sum2$Phylum_Family <- factor(otus_OT.sum2$Phylum_Family, levels=c("Others",sort(old.lvl[old.lvl!="Others"], decreasing=F)))
 
 
 #### PLOT THEME ####
@@ -431,26 +433,25 @@ papertheme <- function(ggplotobject){
           panel.background = element_rect(fill = "white"),
           panel.grid.major=element_blank(),
           panel.grid.minor=element_blank(),
+          panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
           axis.line.x  = element_blank(),
           axis.line.y  = element_blank(),
           plot.title = element_text(size = 16, family="sans", face="bold"),
-          axis.text.x = element_text(size = 14,colour="#696969",family="sans"),
-          axis.text.y = element_text(size = 14,colour="#696969",family="sans"),
-          axis.title.x = element_text(size =16,color="#696969",family="sans"),
-          axis.title.y = element_text(size=16,color="#696969",family="sans"),
-          strip.text.x = element_text(size = 14),
+          axis.text.x = element_text(size = 15,colour="#696969",family="sans"),
+          axis.text.y = element_text(size = 15,colour="#696969",family="sans"),
+          axis.title.x = element_text(size =18,color="#696969",family="sans"),
+          axis.title.y = element_text(size=18,color="#696969",family="sans"),
+          strip.text.x = element_text(face="bold", size = 14),
+          strip.text.y = element_text(face="bold", size=14),
           legend.key = element_blank(),
-          legend.text = element_text(size=12,family="sans", color="#696969"),
-          legend.title=element_text(size=13,family="sans", color="#696969", face = "bold"),
-          strip.background = element_blank(),
+          strip.background = element_rect(fill="white",color="black", size=0.5, linetype="solid"),
           axis.line=element_blank(),
-          panel.border = element_rect(colour = "#696969",size=0.5, fill = "transparent"),
           plot.margin = margin(0.5, 0.5, 0.5, 0, "cm"))+
     guides(shape = guide_legend(override.aes = list(size = 1.5)),
            color = guide_legend(override.aes = list(size = 1.5))) +
-    theme(legend.title = element_text(size = 10), 
-          legend.text  = element_text(size = 10),
-          legend.key.size = unit(0.1, "lines"))
+    theme(legend.text = element_text(size=15,family="sans", color="#696969"),
+          legend.title = element_text(size=18,family="sans", color="#696969", face = "bold"),
+          legend.key.size = unit(1, "line"))
   return(ggplotnewobject)}
 
 
@@ -469,70 +470,33 @@ Palette_SK <- c("#5050FFFF", "#CE3D32FF", "#F0E685FF",  "#3B1B53FF","#CDDEB7FF",
 Palette_OT <- c("#5A655EFF",  "#C75127FF" , "#924822FF" , "#7A65A5FF" , "#E4AF69FF", "#3B1B53FF",  "#CDDEB7FF", "#612A79FF", "#CC9900FF", "#749B58FF", "#AE1F63FF")                 
 
 # Plot relative abundance
-plot_all_1_OT <- ggplot(otus_OT.sum[otus_OT.sum$Condition=="Biof",], aes(fill = Family, y = Abundance)) +
+plot_all_1_OT <- ggplot(otus_OT.sum[otus_OT.sum$Condition=="Biof",], aes(fill = Phylum_Family, y = Abundance)) +
   geom_bar(aes(x= Time), stat="identity", position="stack", colour="grey")
   #facet_grid(.~Time,scales = "free_x")
 
 plot_all_1_OT <- papertheme(plot_all_1_OT) + 
   labs(y="Relative abundance (-)", x="") +
-  theme(strip.text.y = element_text(face="bold", size=15),
-        strip.text.x = element_text(face="bold", size=12),
-        plot.title = element_text(hjust=0.5, size=22),
-        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        legend.text = element_text(size=15,family="sans"), 
-        axis.text.x = element_text(angle = -45, hjust = 0),
-        legend.key.size = unit(1,"line") ) +
-  scale_fill_manual(values= c("lightgrey", Palette_OT), name= "Family")+ 
-  theme_bw(base_size = 20, base_family = "")+
-  theme(legend.position="none")+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
-  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
-
+  scale_fill_manual(values= c("lightgrey", Palette_OT), name= "Phylum_Family")+ 
+  theme(legend.position="none")
 plot_all_1_OT
 
-plot_all_1_SK <- ggplot(otus_SK.sum[otus_SK.sum$Condition=="Biof",], aes(fill = Family, y = Abundance)) +
+plot_all_1_SK <- ggplot(otus_SK.sum[otus_SK.sum$Condition=="Biof",], aes(fill = Phylum_Family, y = Abundance)) +
   geom_bar(aes(x= Time), stat="identity", position="stack", colour="grey")
   #facet_grid(.~Time,scales = "free_x")
 
 plot_all_1_SK <- papertheme(plot_all_1_SK) + 
   labs(y="", x="") +
-  theme(strip.text.y = element_text(face="bold", size=15),
-        strip.text.x = element_text(face="bold", size=12),
-        plot.title = element_text(hjust=0.5, size=22),
-        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        legend.text = element_text(size=15,family="sans"), 
-        axis.text.x = element_text(angle = -45, hjust = 0),
-        legend.key.size = unit(1,"line") ) +
-  scale_fill_manual(values= c("lightgrey", Palette_SK), name= "Family")+ 
-  theme_bw(base_size = 20, base_family = "")+
-  theme(legend.position="none")+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
-  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
-
+  scale_fill_manual(values= c("lightgrey", Palette_SK), name= "Phylum_Family")+ 
+  theme(legend.position="none")
 plot_all_1_SK
 
 #  figure just for legend
-plot_all_1_OT_bt <- ggplot(otus_OT.sum2[otus_OT.sum2$Condition=="Biof",], aes(fill = Family, y = Abundance)) +
+plot_all_1_OT_bt <- ggplot(otus_OT.sum2[otus_OT.sum2$Condition=="Biof",], aes(fill = Phylum_Family, y = Abundance)) +
   geom_bar(aes(x= Time), stat="identity", position="stack", colour="grey")
 
-plot_all_1_OT_bt <- papertheme(plot_all_1_OT_bt) + 
-  labs(y="Relative abundance (-)", x="") +
-  theme(strip.text.y = element_text(face="bold", size=15),
-        strip.text.x = element_text(face="bold", size=12),
-        plot.title = element_text(hjust=0.5, size=22),
-        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        legend.text = element_text(size=15,family="sans"), 
-        axis.text.x = element_text(angle = -45, hjust = 0),
-        legend.key.size = unit(1,"line") ) +
-  scale_fill_manual(values= c("Others"="lightgrey", "A0839"="#5A655EFF", "A4b"= "#C75127FF" , "C_Alphaproteobacteria"="#924822FF" ,"C_JG30-KF-CM66"= "#7A65A5FF" , "Gemmataceae"="#E4AF69FF", "Hyphomicrobiaceae"="#3B1B53FF", "Hyphomonadaceae"= "#CDDEB7FF","Ilumatobacteraceae"= "#612A79FF",  "O_IMCC26256"="#CC9900FF", "O_S085" = "#749B58FF","Rhizobiales Incertae Sedis"= "#AE1F63FF","Acetobacteraceae"="#5050FFFF", "Beijerinckiaceae"= "#CE3D32FF", "Gemmatimonadaceae"= "#F0E685FF", "O_Puniceispirillales" = "#466983FF", "O_Rhodospirillales" = "#D595A7FF","Obscuribacteraceae" = "#5DB1DDFF", "Parvularculaceae"= "#802268FF", "Phycisphaeraceae"= "#6BD76BFF", "Sphingomonadaceae" = "#BA6338FF"), name= "Family") +
-  guides(fill = guide_legend(ncol = 1, direction = "vertical"))+
-  theme_bw(base_size = 20, base_family = "")+
-  #theme(legend.position="right", legend.box = "vertical")+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
-  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+plot_all_1_OT_bt <- papertheme(plot_all_1_OT_bt) +
+  scale_fill_manual(values= c("Others"="lightgrey", "Proteobacteria_A0839"="#5A655EFF", "Chloroflexi_A4b"= "#C75127FF" , "Proteobacteria_C_Alphaproteobacteria"="#924822FF" ,"Chloroflexi_C_JG30-KF-CM66"= "#7A65A5FF" , "Planctomycetota_Gemmataceae"="#E4AF69FF", "Proteobacteria_Hyphomicrobiaceae"="#3B1B53FF", "Proteobacteria_Hyphomonadaceae"= "#CDDEB7FF","Actinobacteriota_Ilumatobacteraceae"= "#612A79FF",  "Actinobacteriota_O_IMCC26256"="#CC9900FF", "Chloroflexi_O_S085" = "#749B58FF","Proteobacteria_Rhizobiales Incertae Sedis"= "#AE1F63FF","Proteobacteria_Acetobacteraceae"="#5050FFFF", "Proteobacteria_Beijerinckiaceae"= "#CE3D32FF", "Gemmatimonadota_Gemmatimonadaceae"= "#F0E685FF", "Proteobacteria_O_Puniceispirillales" = "#466983FF", "Proteobacteria_O_Rhodospirillales" = "#D595A7FF","Cyanobacteria_Obscuribacteraceae" = "#5DB1DDFF", "Proteobacteria_Parvularculaceae"= "#802268FF", "Planctomycetota_Phycisphaeraceae"= "#6BD76BFF", "Proteobacteria_Sphingomonadaceae" = "#BA6338FF"), name= "Phylum_Family") +
+  guides(fill = guide_legend(ncol = 1, direction = "vertical"))
 
 plot_all_1_OT_bt
 
@@ -555,7 +519,12 @@ combined
 
 # Export
 dpi=300
-png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/combined.png",width=15*dpi,height=7*dpi,res=dpi)
+png("/Projects1/Fien/BiofilmRings_2023/ngs/Input/REPORT_files/figures/combined_dec.png",width=15*dpi,height=7*dpi,res=dpi)
+combined
+dev.off()
+
+dpi=300
+tiff("/Projects1/Fien/BiofilmRings_2023/ngs/Input/REPORT_files/figures/combined_dec.tif", width = 15*dpi, height = 7*dpi, res = dpi)
 combined
 dev.off()
 
@@ -610,8 +579,9 @@ otus_m$Family <- factor(otus_m$Family, levels=c("Others",sort(old.lvl[old.lvl!="
 #install.packages("paletteer")
 library(paletteer)
 Palette <-paletteer_d("ggsci::default_igv")
-
-
+Palette1 <- Palette[1:25]
+Palette2 <- Palette[30:35]
+Palette3 <- c(Palette1,Palette2)
 
 # Plot relative abundance
 plot_all <- ggplot(otus_m, aes(fill = Family, y = Abundance)) +
@@ -620,26 +590,15 @@ plot_all <- ggplot(otus_m, aes(fill = Family, y = Abundance)) +
 
 plot_all <- papertheme(plot_all) + 
   labs(y="Relative abundance (-)", x="") +
-  theme(strip.text.y = element_text(face="bold", size=15),
-        strip.text.x = element_text(face="bold", size=12),
-        plot.title = element_text(hjust=0.5, size=22),
-        panel.border = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        strip.background = element_rect(fill=NA,color="#696969", size=0.5, linetype="solid"),
-        legend.text = element_text(size=15,family="sans"), 
-        axis.text.x = element_text(angle = -45, hjust = 0),
-        legend.key.size = unit(1,"line") ) +
-  scale_fill_manual(values= c("lightgrey", Palette), name= "Family")+ 
-  guides(fill = guide_legend(ncol = 1, direction = "vertical"))+
-  #theme_bw(base_size = 20, base_family = "")+
-  #theme(legend.position="none")+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
-  theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
+  theme(axis.text.x = element_text(angle = -45, hjust = 0)) +
+  scale_fill_manual(values= c("lightgrey", Palette3), name= "Phylum_Family")+ 
+  guides(fill = guide_legend(ncol = 1, direction = "vertical"))
 
 plot_all
 
 # Export
 dpi=300
-png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/suppl.png",width=16*dpi,height=8*dpi,res=dpi)
+png("/Projects1/Fien/BiofilmRings_2023/ngs/Input/REPORT_files/figures/suppl.png",width=16*dpi,height=8*dpi,res=dpi)
 plot_all
 dev.off()
 
@@ -730,13 +689,15 @@ PCOA_seq <- metadata_3 %>% ggplot() +
                      labels = c("Treated groundwater", "Treated surface water")) +
   guides(shape = guide_legend(order = 1), color = guide_legend(order = 2)) +
   theme_bw(base_size = 20, base_family = "") +
+  theme(legend.position = "bottom")+
+  theme(legend.box = "vertical")+
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
   theme(strip.background = element_rect(colour = "black", fill = "#EFEFEE"))
 
 PCOA_seq
 
 dpi=400
-png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/figures/PCOA.png",width=10*dpi,height=10*dpi,res=dpi)
+png("/Projects1/Fien/BiofilmRings_2023/ngs/Input/REPORT_files/figures/PCOA.png",width=10*dpi,height=10*dpi,res=dpi)
 PCOA_seq
 dev.off()
 ```
@@ -744,7 +705,7 @@ dev.off()
 ```{r Step4: statistics}
 subset_physeq <- subset_samples(phylobj, Condition != "Bulk")
 subset_physeq <- subset_samples(subset_physeq, Place == "SK")
-subset_physeq <- subset_samples(subset_physeq, Time == "2")
+subset_physeq <- subset_samples(subset_physeq, Time == "1")
 
 
 # Calculate dissimilarity matrix
@@ -777,12 +738,12 @@ dev.off()
 install.packages("ggpubr")
 library("ggpubr")
 
-combined_appendix <- ggarrange(plot_all, PCOA_seq, nrow = 1, labels = c("A","B"),font.label = list(size = 16))
+combined_appendix <- ggarrange(plot_all, PCOA_seq, nrow = 1, labels = c("A","B"),font.label = list(size = 16), widths = c(1.7,1))
 combined_appendix
 
 # Export
 dpi=300
-png("/Projects1/Fien/BiofilmRings/ngs/Input/REPORT_files/combined_appendix.png",width=16*dpi,height=8*dpi,res=dpi)
+png("/Projects1/Fien/BiofilmRings_2023/ngs/Input/REPORT_files/figures/combined_appendix.png",width=17*dpi,height=10*dpi,res=dpi)
 combined_appendix
 dev.off()
 ```
